@@ -610,6 +610,151 @@ def download_genome_annotation(
     return True
 
 
+def build_star_index(
+    genome_id: str,
+    annotation_source: str | None,
+    config: dict[str, Any],
+    base_output_dir: Path,
+    force: bool = False,
+) -> bool:
+    """
+    Build STAR index for a genome.
+
+    Args:
+        genome_id: Genome identifier (e.g., 'hg38')
+        annotation_source: Annotation source (e.g., 'gencode'), or None to auto-detect
+        config: Configuration dictionary
+        base_output_dir: Base directory for output files
+        force: Force rebuild even if index exists
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if genome_id not in config["genomes"]:
+        console.print(f"[red]Error: Unknown genome '{genome_id}'[/red]")
+        return False
+
+    genome_config = config["genomes"][genome_id]
+    genome_name = genome_config["name"]
+
+    console.print(f"\n[bold cyan]Building STAR index for {genome_name} ({genome_id})[/bold cyan]")
+
+    # Check for FASTA
+    fasta_path = base_output_dir / genome_id / "fasta" / "genome.fa"
+    if not fasta_path.exists():
+        console.print(f"[red]Error: FASTA file not found at {fasta_path}[/red]")
+        console.print("[yellow]Run with --fasta to download first[/yellow]")
+        return False
+
+    # Determine annotation source
+    if annotation_source is None:
+        # Auto-detect: check if only one annotation source exists
+        annotation_dir = base_output_dir / genome_id / "annotation"
+        if annotation_dir.exists():
+            available_sources = [d.name for d in annotation_dir.iterdir() if d.is_dir()]
+            if len(available_sources) == 1:
+                annotation_source = available_sources[0]
+                console.print(f"[cyan]Auto-detected annotation source: {annotation_source}[/cyan]")
+            elif len(available_sources) > 1:
+                console.print(f"[red]Error: Multiple annotation sources found: {', '.join(available_sources)}[/red]")
+                console.print("[yellow]Please specify --annotation-source[/yellow]")
+                return False
+            else:
+                console.print("[red]Error: No annotation found[/red]")
+                console.print("[yellow]Run with --annotation to download first[/yellow]")
+                return False
+        else:
+            console.print("[red]Error: No annotation directory found[/red]")
+            console.print("[yellow]Run with --annotation to download first[/yellow]")
+            return False
+
+    # Check for annotation GTF (compressed)
+    gtf_gz_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf.gz"
+    if not gtf_gz_path.exists():
+        console.print(f"[red]Error: GTF file not found at {gtf_gz_path}[/red]")
+        console.print(f"[yellow]Run with --annotation --annotation-source {annotation_source} to download first[/yellow]")
+        return False
+
+    # Decompress GTF for STAR (STAR doesn't support gzipped GTF)
+    gtf_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf"
+    if not gtf_path.exists() or force:
+        console.print(f"[cyan]Decompressing GTF for STAR...[/cyan]")
+        try:
+            result = subprocess.run(
+                ["gunzip", "-c", str(gtf_gz_path)],
+                stdout=open(gtf_path, "wb"),
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            console.print(f"[green]✓ Decompressed GTF to {gtf_path}[/green]")
+        except subprocess.CalledProcessError as error:
+            console.print(f"[red]Error decompressing GTF: {error.stderr.decode()}[/red]")
+            return False
+
+    # Get STAR version
+    if not check_tool_available("STAR"):
+        console.print("[red]Error: STAR not found in PATH[/red]")
+        console.print("[yellow]Please install STAR and ensure it's in your PATH[/yellow]")
+        return False
+
+    star_version = get_tool_version("STAR")
+    if star_version:
+        # Extract version number (e.g., "2.7.11b" from "STAR 2.7.11b")
+        version_parts = star_version.split()
+        if len(version_parts) >= 2:
+            star_version_number = version_parts[1]
+        else:
+            star_version_number = "unknown"
+        console.print(f"[green]✓ Found STAR: {star_version}[/green]")
+    else:
+        star_version_number = "unknown"
+
+    # Setup output directory
+    star_output_dir = base_output_dir / genome_id / "STAR" / star_version_number
+    star_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if index already exists
+    genome_parameters_file = star_output_dir / "genomeParameters.txt"
+    if genome_parameters_file.exists():
+        if not force:
+            console.print(f"[green]✓ STAR index already exists at {star_output_dir}[/green]")
+            console.print("[yellow]Use --force to rebuild[/yellow]")
+            return True
+        else:
+            console.print(f"[yellow]STAR index exists but --force specified, rebuilding...[/yellow]")
+
+    # Build STAR index
+    console.print(f"[cyan]Building STAR index (this may take a while)...[/cyan]")
+    console.print(f"  FASTA: {fasta_path}")
+    console.print(f"  GTF: {gtf_path}")
+    console.print(f"  Output: {star_output_dir}")
+
+    try:
+        # STAR --runMode genomeGenerate
+        result = subprocess.run(
+            [
+                "STAR",
+                "--runMode", "genomeGenerate",
+                "--genomeDir", str(star_output_dir),
+                "--genomeFastaFiles", str(fasta_path),
+                "--sjdbGTFfile", str(gtf_path),
+                "--runThreadN", "8",  # Use 8 threads by default
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        console.print(f"[bold green]✓ Successfully built STAR index[/bold green]")
+        console.print(f"  Index directory: {star_output_dir}")
+        return True
+
+    except subprocess.CalledProcessError as error:
+        console.print(f"[red]Error building STAR index:[/red]")
+        console.print(error.stderr)
+        return False
+
+
 def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_dir: Path, force: bool = False) -> bool:
     """
     Download and prepare a genome FASTA file.
@@ -736,6 +881,12 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--star",
+        action="store_true",
+        help="Build STAR index (requires FASTA and annotation)",
+    )
+
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path.cwd(),
@@ -769,12 +920,13 @@ def main() -> int:
         parser.print_help()
         return 1
 
-    # Determine what to download
+    # Determine what to download/build
     download_fasta_flag = args.fasta
     download_annotation_flag = args.annotation
+    build_star_flag = args.star
 
-    # If neither specified, default to downloading FASTA only
-    if not download_fasta_flag and not download_annotation_flag:
+    # If nothing specified, default to downloading FASTA only
+    if not download_fasta_flag and not download_annotation_flag and not build_star_flag:
         download_fasta_flag = True
 
     # Track overall success
@@ -822,6 +974,32 @@ def main() -> int:
         success = download_genome_annotation(
             args.genome,
             args.annotation_source,
+            config,
+            args.output_dir,
+            args.force,
+        )
+        if not success:
+            all_successful = False
+
+    # Build STAR index
+    if build_star_flag:
+        # Check for required tools
+        if not check_tool_available("STAR"):
+            console.print("[red]Error: STAR is required but not found in PATH[/red]")
+            console.print("[yellow]Please install STAR and ensure it's in your PATH[/yellow]")
+            return 1
+
+        star_version = get_tool_version("STAR")
+        if star_version:
+            console.print(f"[green]✓ Found STAR: {star_version}[/green]")
+
+        # Determine annotation source for STAR
+        # If user specified --annotation-source, use it; otherwise let build_star_index auto-detect
+        annotation_source_for_star = args.annotation_source if args.annotation_source != "gencode" or download_annotation_flag else None
+
+        success = build_star_index(
+            args.genome,
+            annotation_source_for_star,
             config,
             args.output_dir,
             args.force,

@@ -13,7 +13,7 @@ This tool automates the download, indexing, and preparation of genomic reference
 
 - **Genome references**: Downloads FASTA files and creates indexes (.fai)
 - **Gene annotations**: Downloads and indexes annotation files (GTF format)
-- **Tool databases**: Builds indexes for STAR, Salmon, BWA, and other tools
+- **Tool databases**: Builds indexes for STAR (Salmon, BWA support coming soon)
 
 ## Features
 
@@ -28,8 +28,9 @@ hg38/
 │   └── genome.fa.fai
 ├── annotation/
 │   └── gencode/
-│       ├── genes.gtf
-│       └── genes.gtf.tbi
+│       ├── genes.gtf       (decompressed for STAR)
+│       ├── genes.gtf.gz    (bgzipped for tabix)
+│       └── genes.gtf.gz.tbi
 └── STAR/
     └── 2.7.11b/
         └── <index files>
@@ -61,7 +62,8 @@ hg38/
 - Bioinformatics tools must be available in your PATH:
   - **samtools** - For FASTA indexing
   - **bgzip** and **tabix** (from htslib) - For GTF compression and indexing
-  - **STAR, Salmon, BWA** - Optional, for building tool-specific indexes
+  - **STAR** - Optional, for building STAR alignment indexes
+  - **Salmon, BWA** - Coming soon
 
 **Note**: Python dependencies are managed inline using uv's script metadata format (PEP 723). No separate virtual environment setup needed - uv handles everything automatically when you run the script.
 
@@ -93,9 +95,15 @@ chmod +x packrat.py
 
 # Force re-download even if files exist
 ./packrat.py --genome hg38 --annotation --force
+
+# Build STAR index (auto-detects annotation if only one exists)
+./packrat.py --genome hg38 --star
+
+# Build everything: download FASTA, annotation, and build STAR index
+./packrat.py --genome hg38 --fasta --annotation --star
 ```
 
-**Note**: By default, packrat will skip downloads if the output files already exist. Use `--force` to re-download.
+**Note**: By default, packrat will skip downloads/builds if the output files already exist. Use `--force` to re-download or rebuild.
 
 Alternatively, run explicitly with uv:
 
