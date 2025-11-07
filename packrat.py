@@ -333,6 +333,73 @@ def standardize_chromosome_names(input_gtf_path: Path, output_gtf_path: Path, ad
         return False
 
 
+def sort_gtf_file(input_gtf_path: Path, output_gtf_path: Path) -> bool:
+    """
+    Sort a GTF file by chromosome and position (required for tabix indexing).
+
+    Args:
+        input_gtf_path: Path to the input GTF file
+        output_gtf_path: Path to the output sorted GTF file
+
+    Returns:
+        True if sorting successful, False otherwise
+    """
+    try:
+        console.print(f"[cyan]Sorting GTF file for tabix indexing...[/cyan]")
+
+        # Separate header and data lines
+        header_lines = []
+        data_lines = []
+
+        with open(input_gtf_path, "r") as input_file:
+            for line in input_file:
+                if line.startswith("#"):
+                    header_lines.append(line)
+                else:
+                    data_lines.append(line)
+
+        # Sort data lines by chromosome (col 1) and start position (col 4)
+        # Using a temporary file for large datasets
+        temp_data_file = input_gtf_path.parent / f"{input_gtf_path.name}.temp_data"
+
+        with open(temp_data_file, "w") as temp_file:
+            for line in data_lines:
+                temp_file.write(line)
+
+        # Use system sort command for efficiency
+        # -t$'\t': tab delimiter
+        # -k1,1: sort by chromosome (column 1)
+        # -k4,4n: sort by start position (column 4, numeric)
+        # -k5,5n: sort by end position (column 5, numeric)
+        result = subprocess.run(
+            ["sort", "-t", "\t", "-k1,1", "-k4,4n", "-k5,5n", str(temp_data_file)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        # Write sorted output with headers first
+        with open(output_gtf_path, "w") as output_file:
+            # Write headers
+            for header_line in header_lines:
+                output_file.write(header_line)
+
+            # Write sorted data
+            output_file.write(result.stdout)
+
+        # Clean up temp file
+        temp_data_file.unlink()
+
+        console.print(f"[green]✓ GTF file sorted[/green]")
+        return True
+    except subprocess.CalledProcessError as error:
+        console.print(f"[red]Error sorting GTF: {error.stderr}[/red]")
+        return False
+    except Exception as error:
+        console.print(f"[red]Error sorting GTF file: {error}[/red]")
+        return False
+
+
 def compress_with_bgzip(input_file_path: Path, output_file_path: Path) -> bool:
     """
     Compress a file using bgzip (block gzip for tabix indexing).
@@ -514,13 +581,22 @@ def download_genome_annotation(
         # Just rename if no standardization needed
         uncompressed_gtf_path.rename(standardized_gtf_path)
 
-    # Compress with bgzip for tabix indexing
-    if not compress_with_bgzip(standardized_gtf_path, final_compressed_path):
+    # Sort GTF file (required for tabix indexing)
+    sorted_gtf_path = annotation_output_dir / "genes.sorted.gtf"
+    if not sort_gtf_file(standardized_gtf_path, sorted_gtf_path):
         return False
 
-    # Clean up uncompressed file
-    console.print(f"[cyan]Removing uncompressed file...[/cyan]")
+    # Clean up unsorted file
+    console.print(f"[cyan]Removing unsorted file...[/cyan]")
     standardized_gtf_path.unlink()
+
+    # Compress with bgzip for tabix indexing
+    if not compress_with_bgzip(sorted_gtf_path, final_compressed_path):
+        return False
+
+    # Clean up sorted uncompressed file
+    console.print(f"[cyan]Removing uncompressed sorted file...[/cyan]")
+    sorted_gtf_path.unlink()
 
     # Create tabix index
     if not index_gtf_with_tabix(final_compressed_path):
