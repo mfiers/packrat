@@ -4,6 +4,9 @@ A single-file Python script for automated management of genomic reference data a
 
 > Like a packrat collecting and organizing treasures, packrat gathers and curates your genomic references.
 
+<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/324552b1-1072-4083-a08b-0767a109660a" />
+
+
 ## Overview
 
 This tool automates the download, indexing, and preparation of genomic reference data for bioinformatics pipelines. It handles:
