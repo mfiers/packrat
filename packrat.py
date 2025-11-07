@@ -699,15 +699,12 @@ def build_star_index(
 
     star_version = get_tool_version("STAR")
     if star_version:
-        # Extract version number (e.g., "2.7.11b" from "STAR 2.7.11b")
-        version_parts = star_version.split()
-        if len(version_parts) >= 2:
-            star_version_number = version_parts[1]
-        else:
-            star_version_number = "unknown"
-        console.print(f"[green]✓ Found STAR: {star_version}[/green]")
+        # STAR --version returns just the version number (e.g., "2.7.11b")
+        star_version_number = star_version.strip()
+        console.print(f"[green]✓ Found STAR: {star_version_number}[/green]")
     else:
         star_version_number = "unknown"
+        console.print("[yellow]Warning: Could not detect STAR version[/yellow]")
 
     # Setup output directory
     star_output_dir = base_output_dir / genome_id / "STAR" / star_version_number
