@@ -87,7 +87,12 @@ chmod +x packrat.py
 
 # Download specific annotation source
 ./packrat.py --genome hg38 --annotation --annotation-source gencode
+
+# Force re-download even if files exist
+./packrat.py --genome hg38 --annotation --force
 ```
+
+**Note**: By default, packrat will skip downloads if the output files already exist. Use `--force` to re-download.
 
 Alternatively, run explicitly with uv:
 
