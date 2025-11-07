@@ -55,9 +55,12 @@ hg38/
 
 - Python 3.13+
 - [uv](https://github.com/astral-sh/uv) - Python package manager
-- Bioinformatics tools must be available in your PATH (STAR, Salmon, BWA, samtools, etc.)
+- Bioinformatics tools must be available in your PATH:
+  - **samtools** - For FASTA indexing
+  - **bgzip** and **tabix** (from htslib) - For GTF compression and indexing
+  - **STAR, Salmon, BWA** - Optional, for building tool-specific indexes
 
-**Note**: Python dependencies are managed inline using uv's script metadata foOkrmat (PEP 723). No separate virtual environment setup needed - uv handles everything automatically when you run the script.
+**Note**: Python dependencies are managed inline using uv's script metadata format (PEP 723). No separate virtual environment setup needed - uv handles everything automatically when you run the script.
 
 ## Usage
 
@@ -67,20 +70,29 @@ The script uses uv's inline dependency management, so just run it directly:
 # Make executable (first time only)
 chmod +x packrat.py
 
-# Basic usage
-./packrat.py
+# List available genomes and annotations
+./packrat.py --list
 
-# With specific genome
+# Download genome FASTA (default behavior)
 ./packrat.py --genome hg38
 
-# Build specific tool index
-./packrat.py --genome hg38 --tool STAR
+# Download genome annotation
+./packrat.py --genome hg38 --annotation
+
+# Download both FASTA and annotation
+./packrat.py --genome hg38 --fasta --annotation
+
+# Specify custom output directory
+./packrat.py --genome hg38 --annotation --output-dir /data/references
+
+# Download specific annotation source
+./packrat.py --genome hg38 --annotation --annotation-source gencode
 ```
 
 Alternatively, run explicitly with uv:
 
 ```bash
-uv run packrat.py --genome hg38
+uv run packrat.py --genome hg38 --annotation
 ```
 
 ## Configuration

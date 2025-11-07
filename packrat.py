@@ -44,8 +44,14 @@ genomes:
     name: "Human GRCh38/hg38"
     fasta:
       url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz"
-      md5: "e3f10d2c1e2f2f5b5c5a5c5a5c5a5c5a"  # Placeholder - will skip verification if empty
+      md5: ""  # Will skip verification if empty
       has_chr_prefix: true
+    annotation:
+      gencode:
+        name: "GENCODE v47"
+        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/gencode.v47.annotation.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 
   hg19:
     name: "Human GRCh37/hg19"
@@ -53,6 +59,12 @@ genomes:
       url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz"
       md5: ""
       has_chr_prefix: true
+    annotation:
+      gencode:
+        name: "GENCODE v47lift37"
+        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/GRCh37_mapping/gencode.v47lift37.annotation.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 
   mm10:
     name: "Mouse GRCm38/mm10"
@@ -60,6 +72,12 @@ genomes:
       url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/mm10.fa.gz"
       md5: ""
       has_chr_prefix: true
+    annotation:
+      gencode:
+        name: "GENCODE vM35"
+        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 """
 
 
@@ -228,6 +246,291 @@ def verify_fasta_file(fasta_path: Path) -> bool:
         return False
 
 
+def verify_gtf_file(gtf_path: Path) -> bool:
+    """
+    Perform basic sanity checks on a GTF file.
+
+    Args:
+        gtf_path: Path to the GTF file
+
+    Returns:
+        True if file appears valid, False otherwise
+    """
+    try:
+        with open(gtf_path, "r") as gtf_file:
+            # Skip comments
+            for line in gtf_file:
+                if line.startswith("#"):
+                    continue
+
+                # Check first data line
+                fields = line.strip().split("\t")
+                if len(fields) != 9:
+                    console.print(f"[red]Error: GTF file has invalid format (expected 9 fields, got {len(fields)})[/red]")
+                    return False
+
+                console.print(f"[green]✓ GTF validation passed[/green]")
+                console.print(f"  First feature: {fields[2]} on {fields[0]}")
+                return True
+
+            console.print("[red]Error: GTF file appears to be empty[/red]")
+            return False
+    except Exception as error:
+        console.print(f"[red]Error validating GTF: {error}[/red]")
+        return False
+
+
+def standardize_chromosome_names(input_gtf_path: Path, output_gtf_path: Path, add_chr_prefix: bool = True) -> bool:
+    """
+    Standardize chromosome names in a GTF file by adding/removing 'chr' prefix.
+
+    Args:
+        input_gtf_path: Path to the input GTF file
+        output_gtf_path: Path to the output GTF file
+        add_chr_prefix: If True, add 'chr' prefix; if False, remove it
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        console.print(f"[cyan]Standardizing chromosome names (add_chr_prefix={add_chr_prefix})...[/cyan]")
+
+        modifications_made = False
+        with open(input_gtf_path, "r") as input_file, open(output_gtf_path, "w") as output_file:
+            for line in input_file:
+                if line.startswith("#"):
+                    output_file.write(line)
+                    continue
+
+                fields = line.strip().split("\t")
+                if len(fields) < 9:
+                    output_file.write(line)
+                    continue
+
+                chromosome_name = fields[0]
+
+                if add_chr_prefix:
+                    # Add chr prefix if not present
+                    if not chromosome_name.startswith("chr"):
+                        fields[0] = f"chr{chromosome_name}"
+                        modifications_made = True
+                else:
+                    # Remove chr prefix if present
+                    if chromosome_name.startswith("chr"):
+                        fields[0] = chromosome_name[3:]
+                        modifications_made = True
+
+                output_file.write("\t".join(fields) + "\n")
+
+        if modifications_made:
+            console.print(f"[green]✓ Chromosome names standardized[/green]")
+        else:
+            console.print(f"[yellow]Chromosome names already in correct format[/yellow]")
+
+        return True
+    except Exception as error:
+        console.print(f"[red]Error standardizing chromosome names: {error}[/red]")
+        return False
+
+
+def compress_with_bgzip(input_file_path: Path, output_file_path: Path) -> bool:
+    """
+    Compress a file using bgzip (block gzip for tabix indexing).
+
+    Args:
+        input_file_path: Path to the input file
+        output_file_path: Path to the output .gz file
+
+    Returns:
+        True if compression successful, False otherwise
+    """
+    if not check_tool_available("bgzip"):
+        console.print("[red]Error: bgzip not found in PATH[/red]")
+        console.print("[yellow]bgzip is part of htslib/tabix. Please install it.[/yellow]")
+        return False
+
+    try:
+        console.print(f"[cyan]Compressing with bgzip...[/cyan]")
+
+        result = subprocess.run(
+            ["bgzip", "-c", str(input_file_path)],
+            stdout=open(output_file_path, "wb"),
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+
+        console.print(f"[green]✓ Compressed to {output_file_path}[/green]")
+        return True
+    except subprocess.CalledProcessError as error:
+        console.print(f"[red]Error compressing with bgzip: {error.stderr.decode()}[/red]")
+        return False
+
+
+def index_gtf_with_tabix(gtf_gz_path: Path) -> bool:
+    """
+    Create tabix index for a bgzipped GTF file.
+
+    Args:
+        gtf_gz_path: Path to the bgzipped GTF file
+
+    Returns:
+        True if indexing successful, False otherwise
+    """
+    if not check_tool_available("tabix"):
+        console.print("[red]Error: tabix not found in PATH[/red]")
+        console.print("[yellow]tabix is part of htslib. Please install it.[/yellow]")
+        return False
+
+    try:
+        console.print(f"[cyan]Indexing with tabix...[/cyan]")
+
+        result = subprocess.run(
+            ["tabix", "-p", "gff", str(gtf_gz_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        index_path = Path(f"{gtf_gz_path}.tbi")
+        if index_path.exists():
+            console.print(f"[green]✓ Created index: {index_path}[/green]")
+            return True
+        else:
+            console.print("[red]Error: Index file was not created[/red]")
+            return False
+    except subprocess.CalledProcessError as error:
+        console.print(f"[red]Error indexing with tabix: {error.stderr}[/red]")
+        return False
+
+
+def download_genome_annotation(
+    genome_id: str,
+    annotation_source: str,
+    config: dict[str, Any],
+    base_output_dir: Path,
+) -> bool:
+    """
+    Download and prepare a genome annotation file.
+
+    Args:
+        genome_id: Genome identifier (e.g., 'hg38')
+        annotation_source: Annotation source (e.g., 'gencode')
+        config: Configuration dictionary
+        base_output_dir: Base directory for output files
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if genome_id not in config["genomes"]:
+        console.print(f"[red]Error: Unknown genome '{genome_id}'[/red]")
+        return False
+
+    genome_config = config["genomes"][genome_id]
+
+    if "annotation" not in genome_config:
+        console.print(f"[red]Error: No annotations configured for '{genome_id}'[/red]")
+        return False
+
+    if annotation_source not in genome_config["annotation"]:
+        console.print(f"[red]Error: Unknown annotation source '{annotation_source}' for '{genome_id}'[/red]")
+        available_sources = ", ".join(genome_config["annotation"].keys())
+        console.print(f"[yellow]Available sources: {available_sources}[/yellow]")
+        return False
+
+    genome_name = genome_config["name"]
+    annotation_config = genome_config["annotation"][annotation_source]
+    annotation_name = annotation_config["name"]
+
+    console.print(f"\n[bold cyan]Processing {annotation_name} for {genome_name}[/bold cyan]")
+
+    # Setup paths
+    annotation_output_dir = base_output_dir / genome_id / "annotation" / annotation_source
+    annotation_output_dir.mkdir(parents=True, exist_ok=True)
+
+    compressed_download_path = annotation_output_dir / f"{annotation_source}.gtf.gz"
+    uncompressed_gtf_path = annotation_output_dir / f"{annotation_source}.temp.gtf"
+    standardized_gtf_path = annotation_output_dir / "genes.gtf"
+    final_compressed_path = annotation_output_dir / "genes.gtf.gz"
+
+    # Check if already exists
+    if final_compressed_path.exists() and Path(f"{final_compressed_path}.tbi").exists():
+        console.print(f"[yellow]Annotation already exists at {final_compressed_path}[/yellow]")
+
+        response = console.input("Overwrite? [y/N]: ").strip().lower()
+        if response != "y":
+            console.print("[yellow]Skipping download[/yellow]")
+            return True
+
+    # Download
+    console.print(f"[cyan]Downloading from: {annotation_config['url']}[/cyan]")
+
+    if not download_file(
+        annotation_config["url"],
+        compressed_download_path,
+        f"Downloading {annotation_source}",
+    ):
+        return False
+
+    # Verify MD5 if provided
+    if annotation_config.get("md5"):
+        console.print("[cyan]Verifying MD5 checksum...[/cyan]")
+        calculated_md5 = calculate_md5(compressed_download_path)
+        expected_md5 = annotation_config["md5"]
+
+        if calculated_md5 != expected_md5:
+            console.print(f"[red]MD5 mismatch![/red]")
+            console.print(f"  Expected: {expected_md5}")
+            console.print(f"  Got:      {calculated_md5}")
+            return False
+        console.print("[green]✓ MD5 checksum verified[/green]")
+
+    # Decompress
+    if not decompress_gzip(compressed_download_path, uncompressed_gtf_path):
+        return False
+
+    # Clean up downloaded compressed file
+    console.print(f"[cyan]Removing downloaded compressed file...[/cyan]")
+    compressed_download_path.unlink()
+
+    # Verify GTF
+    if not verify_gtf_file(uncompressed_gtf_path):
+        return False
+
+    # Standardize chromosome names if needed
+    needs_chr_prefix = not annotation_config.get("has_chr_prefix", True)
+
+    if needs_chr_prefix:
+        if not standardize_chromosome_names(
+            uncompressed_gtf_path,
+            standardized_gtf_path,
+            add_chr_prefix=True,
+        ):
+            return False
+        # Clean up temp file
+        uncompressed_gtf_path.unlink()
+    else:
+        # Just rename if no standardization needed
+        uncompressed_gtf_path.rename(standardized_gtf_path)
+
+    # Compress with bgzip for tabix indexing
+    if not compress_with_bgzip(standardized_gtf_path, final_compressed_path):
+        return False
+
+    # Clean up uncompressed file
+    console.print(f"[cyan]Removing uncompressed file...[/cyan]")
+    standardized_gtf_path.unlink()
+
+    # Create tabix index
+    if not index_gtf_with_tabix(final_compressed_path):
+        return False
+
+    console.print(f"[bold green]✓ Successfully prepared {annotation_name}[/bold green]")
+    console.print(f"  GTF: {final_compressed_path}")
+    console.print(f"  Index: {final_compressed_path}.tbi")
+
+    return True
+
+
 def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_dir: Path) -> bool:
     """
     Download and prepare a genome FASTA file.
@@ -332,6 +635,25 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--fasta",
+        action="store_true",
+        help="Download genome FASTA file (default if no other options specified)",
+    )
+
+    parser.add_argument(
+        "--annotation",
+        action="store_true",
+        help="Download genome annotation file",
+    )
+
+    parser.add_argument(
+        "--annotation-source",
+        type=str,
+        default="gencode",
+        help="Annotation source to download (default: gencode)",
+    )
+
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path.cwd(),
@@ -348,6 +670,9 @@ def main() -> int:
         console.print("\n[bold cyan]Available genomes:[/bold cyan]")
         for genome_id, genome_info in config["genomes"].items():
             console.print(f"  {genome_id:10s} - {genome_info['name']}")
+            if "annotation" in genome_info:
+                annotation_sources = ", ".join(genome_info["annotation"].keys())
+                console.print(f"    Annotations: {annotation_sources}")
         return 0
 
     # Check if genome specified
@@ -356,20 +681,66 @@ def main() -> int:
         parser.print_help()
         return 1
 
-    # Check for required tools
-    if not check_tool_available("samtools"):
-        console.print("[red]Error: samtools is required but not found in PATH[/red]")
-        console.print("[yellow]Please install samtools and ensure it's in your PATH[/yellow]")
-        return 1
+    # Determine what to download
+    download_fasta_flag = args.fasta
+    download_annotation_flag = args.annotation
 
-    samtools_version = get_tool_version("samtools")
-    if samtools_version:
-        console.print(f"[green]✓ Found samtools: {samtools_version}[/green]")
+    # If neither specified, default to downloading FASTA only
+    if not download_fasta_flag and not download_annotation_flag:
+        download_fasta_flag = True
 
-    # Download genome
-    success = download_genome_fasta(args.genome, config, args.output_dir)
+    # Track overall success
+    all_successful = True
 
-    return 0 if success else 1
+    # Download FASTA
+    if download_fasta_flag:
+        # Check for required tools
+        if not check_tool_available("samtools"):
+            console.print("[red]Error: samtools is required but not found in PATH[/red]")
+            console.print("[yellow]Please install samtools and ensure it's in your PATH[/yellow]")
+            return 1
+
+        samtools_version = get_tool_version("samtools")
+        if samtools_version:
+            console.print(f"[green]✓ Found samtools: {samtools_version}[/green]")
+
+        success = download_genome_fasta(args.genome, config, args.output_dir)
+        if not success:
+            all_successful = False
+
+    # Download annotation
+    if download_annotation_flag:
+        # Check for required tools
+        tools_required = ["bgzip", "tabix"]
+        missing_tools = []
+
+        for tool in tools_required:
+            if not check_tool_available(tool):
+                missing_tools.append(tool)
+
+        if missing_tools:
+            console.print(f"[red]Error: Required tools not found in PATH: {', '.join(missing_tools)}[/red]")
+            console.print("[yellow]Please install htslib (provides bgzip and tabix)[/yellow]")
+            return 1
+
+        bgzip_version = get_tool_version("bgzip")
+        if bgzip_version:
+            console.print(f"[green]✓ Found bgzip: {bgzip_version}[/green]")
+
+        tabix_version = get_tool_version("tabix")
+        if tabix_version:
+            console.print(f"[green]✓ Found tabix: {tabix_version}[/green]")
+
+        success = download_genome_annotation(
+            args.genome,
+            args.annotation_source,
+            config,
+            args.output_dir,
+        )
+        if not success:
+            all_successful = False
+
+    return 0 if all_successful else 1
 
 
 if __name__ == "__main__":
