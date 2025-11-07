@@ -472,10 +472,10 @@ def download_genome_annotation(
         return False
 
     # Verify MD5 if provided
-    if annotation_config.get("md5"):
+    expected_md5 = annotation_config.get("md5", "").strip()
+    if expected_md5:
         console.print("[cyan]Verifying MD5 checksum...[/cyan]")
         calculated_md5 = calculate_md5(compressed_download_path)
-        expected_md5 = annotation_config["md5"]
 
         if calculated_md5 != expected_md5:
             console.print(f"[red]MD5 mismatch![/red]")
@@ -483,6 +483,8 @@ def download_genome_annotation(
             console.print(f"  Got:      {calculated_md5}")
             return False
         console.print("[green]✓ MD5 checksum verified[/green]")
+    else:
+        console.print("[yellow]Skipping MD5 verification (no checksum provided)[/yellow]")
 
     # Decompress
     if not decompress_gzip(compressed_download_path, uncompressed_gtf_path):
@@ -580,10 +582,10 @@ def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_di
         return False
 
     # Verify MD5 if provided
-    if fasta_config.get("md5"):
+    expected_md5 = fasta_config.get("md5", "").strip()
+    if expected_md5:
         console.print("[cyan]Verifying MD5 checksum...[/cyan]")
         calculated_md5 = calculate_md5(compressed_fasta_path)
-        expected_md5 = fasta_config["md5"]
 
         if calculated_md5 != expected_md5:
             console.print(f"[red]MD5 mismatch![/red]")
@@ -591,6 +593,8 @@ def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_di
             console.print(f"  Got:      {calculated_md5}")
             return False
         console.print("[green]✓ MD5 checksum verified[/green]")
+    else:
+        console.print("[yellow]Skipping MD5 verification (no checksum provided)[/yellow]")
 
     # Decompress
     if not decompress_gzip(compressed_fasta_path, final_fasta_path):
