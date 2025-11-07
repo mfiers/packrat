@@ -475,6 +475,7 @@ def download_genome_annotation(
     annotation_source: str,
     config: dict[str, Any],
     base_output_dir: Path,
+    force: bool = False,
 ) -> bool:
     """
     Download and prepare a genome annotation file.
@@ -521,12 +522,12 @@ def download_genome_annotation(
 
     # Check if already exists
     if final_compressed_path.exists() and Path(f"{final_compressed_path}.tbi").exists():
-        console.print(f"[yellow]Annotation already exists at {final_compressed_path}[/yellow]")
-
-        response = console.input("Overwrite? [y/N]: ").strip().lower()
-        if response != "y":
-            console.print("[yellow]Skipping download[/yellow]")
+        if not force:
+            console.print(f"[green]✓ Annotation already exists at {final_compressed_path}[/green]")
+            console.print("[yellow]Use --force to re-download[/yellow]")
             return True
+        else:
+            console.print(f"[yellow]Annotation exists but --force specified, re-downloading...[/yellow]")
 
     # Download
     console.print(f"[cyan]Downloading from: {annotation_config['url']}[/cyan]")
@@ -609,7 +610,7 @@ def download_genome_annotation(
     return True
 
 
-def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_dir: Path) -> bool:
+def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_dir: Path, force: bool = False) -> bool:
     """
     Download and prepare a genome FASTA file.
 
@@ -640,17 +641,18 @@ def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_di
 
     # Download
     if final_fasta_path.exists():
-        console.print(f"[yellow]FASTA already exists at {final_fasta_path}[/yellow]")
-
-        response = console.input("Overwrite? [y/N]: ").strip().lower()
-        if response != "y":
-            console.print("[yellow]Skipping download[/yellow]")
+        if not force:
+            console.print(f"[green]✓ FASTA already exists at {final_fasta_path}[/green]")
 
             # Still check if index exists
             if not Path(f"{final_fasta_path}.fai").exists():
                 console.print("[cyan]Index missing, creating...[/cyan]")
                 return index_fasta(final_fasta_path)
+            else:
+                console.print("[yellow]Use --force to re-download[/yellow]")
             return True
+        else:
+            console.print(f"[yellow]FASTA exists but --force specified, re-downloading...[/yellow]")
 
     console.print(f"[cyan]Downloading from: {fasta_config['url']}[/cyan]")
 
@@ -740,6 +742,12 @@ def main() -> int:
         help="Base output directory (default: current directory)",
     )
 
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-download even if files already exist",
+    )
+
     args = parser.parse_args()
 
     # Load configuration
@@ -784,7 +792,7 @@ def main() -> int:
         if samtools_version:
             console.print(f"[green]✓ Found samtools: {samtools_version}[/green]")
 
-        success = download_genome_fasta(args.genome, config, args.output_dir)
+        success = download_genome_fasta(args.genome, config, args.output_dir, args.force)
         if not success:
             all_successful = False
 
@@ -816,6 +824,7 @@ def main() -> int:
             args.annotation_source,
             config,
             args.output_dir,
+            args.force,
         )
         if not success:
             all_successful = False
