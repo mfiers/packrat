@@ -676,6 +676,8 @@ def build_star_index(
         return False
 
     # Decompress GTF for STAR (STAR doesn't support gzipped GTF)
+    # Note: The tabix-sorted GTF may have chromosome ordering issues for STAR
+    # We decompress it and let STAR handle the coordinates
     gtf_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf"
     if not gtf_path.exists() or force:
         console.print(f"[cyan]Decompressing GTF for STAR...[/cyan]")
@@ -690,6 +692,8 @@ def build_star_index(
         except subprocess.CalledProcessError as error:
             console.print(f"[red]Error decompressing GTF: {error.stderr.decode()}[/red]")
             return False
+    else:
+        console.print(f"[cyan]Using existing decompressed GTF: {gtf_path}[/cyan]")
 
     # Get STAR version
     if not check_tool_available("STAR"):
@@ -728,6 +732,8 @@ def build_star_index(
 
     try:
         # STAR --runMode genomeGenerate
+        # --sjdbOverhang should ideally be ReadLength-1, but 100 is a common default
+        # --genomeChrBinNbits helps with large genomes and many chromosomes
         result = subprocess.run(
             [
                 "STAR",
@@ -735,7 +741,10 @@ def build_star_index(
                 "--genomeDir", str(star_output_dir),
                 "--genomeFastaFiles", str(fasta_path),
                 "--sjdbGTFfile", str(gtf_path),
+                "--sjdbOverhang", "100",  # Default for reads ~100bp
                 "--runThreadN", "8",  # Use 8 threads by default
+                "--genomeSAsparseD", "2",  # Reduce memory usage for large genomes
+                "--limitGenomeGenerateRAM", "35000000000",  # 35GB RAM limit
             ],
             capture_output=True,
             text=True,
