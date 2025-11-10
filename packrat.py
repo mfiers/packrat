@@ -771,6 +771,11 @@ def build_star_index(
     console.print(f"  GTF: {gtf_path}")
     console.print(f"  Output: {star_output_dir}")
 
+    # Detect number of available CPUs
+    import os
+    num_cpus = os.cpu_count() or 8  # Fallback to 8 if detection fails
+    console.print(f"  Using {num_cpus} CPU threads")
+
     try:
         # STAR --runMode genomeGenerate
         # --sjdbOverhang should ideally be ReadLength-1, but 100 is a common default
@@ -783,7 +788,7 @@ def build_star_index(
                 "--genomeFastaFiles", str(fasta_path),
                 "--sjdbGTFfile", str(gtf_path),
                 "--sjdbOverhang", "100",  # Default for reads ~100bp
-                "--runThreadN", "8",  # Use 8 threads by default
+                "--runThreadN", str(num_cpus),  # Use all available CPUs
                 "--genomeSAsparseD", "2",  # Reduce memory usage for large genomes
                 "--limitGenomeGenerateRAM", "35000000000",  # 35GB RAM limit
             ],
