@@ -787,6 +787,197 @@ def build_star_index(
         return False
 
 
+def merge_genomes(
+    merged_genome_id: str,
+    source_genome_ids: list[str],
+    config: dict[str, Any],
+    base_output_dir: Path,
+    force: bool = False,
+) -> bool:
+    """
+    Merge multiple genomes into a single hybrid genome.
+
+    Creates a new genome by concatenating FASTA files and annotations from
+    multiple source genomes. All chromosome and gene IDs are prefixed with
+    the source genome ID to avoid conflicts.
+
+    Args:
+        merged_genome_id: ID for the new merged genome (e.g., 'hs1mm39')
+        source_genome_ids: List of source genome IDs to merge (e.g., ['hs1', 'mm39'])
+        config: Configuration dictionary
+        base_output_dir: Base directory for output files
+        force: Force rebuild even if merged genome exists
+
+    Returns:
+        True if successful, False otherwise
+    """
+    console.print(f"\n[bold cyan]Merging genomes into {merged_genome_id}[/bold cyan]")
+    console.print(f"Source genomes: {', '.join(source_genome_ids)}")
+
+    # Setup output directory
+    merged_genome_dir = base_output_dir / merged_genome_id
+    merged_fasta_dir = merged_genome_dir / "fasta"
+    merged_annotation_dir = merged_genome_dir / "annotation" / "merged"
+
+    merged_fasta_dir.mkdir(parents=True, exist_ok=True)
+    merged_annotation_dir.mkdir(parents=True, exist_ok=True)
+
+    merged_fasta_path = merged_fasta_dir / "genome.fa"
+    merged_gtf_path = merged_annotation_dir / "genes.gtf"
+
+    # Check if already exists
+    if merged_fasta_path.exists() and merged_gtf_path.exists():
+        if not force:
+            console.print(f"[green]✓ Merged genome already exists at {merged_genome_dir}[/green]")
+            console.print("[yellow]Use --force to rebuild[/yellow]")
+            return True
+        else:
+            console.print(f"[yellow]Merged genome exists but --force specified, rebuilding...[/yellow]")
+
+    # Validate source genomes exist
+    for genome_id in source_genome_ids:
+        fasta_path = base_output_dir / genome_id / "fasta" / "genome.fa"
+        if not fasta_path.exists():
+            console.print(f"[red]Error: FASTA not found for {genome_id} at {fasta_path}[/red]")
+            console.print(f"[yellow]Run: ./packrat.py --genome {genome_id} --fasta[/yellow]")
+            return False
+
+    # Merge FASTA files
+    console.print(f"[cyan]Merging FASTA files...[/cyan]")
+    with open(merged_fasta_path, "w") as merged_fasta:
+        for genome_id in source_genome_ids:
+            source_fasta_path = base_output_dir / genome_id / "fasta" / "genome.fa"
+            console.print(f"  Adding {genome_id}...")
+
+            with open(source_fasta_path, "r") as source_fasta:
+                for line in source_fasta:
+                    if line.startswith(">"):
+                        # Prefix chromosome name
+                        chromosome_name = line[1:].split()[0]
+                        rest_of_line = " ".join(line[1:].split()[1:])
+                        if rest_of_line:
+                            merged_fasta.write(f">{genome_id}__{chromosome_name} {rest_of_line}\n")
+                        else:
+                            merged_fasta.write(f">{genome_id}__{chromosome_name}\n")
+                    else:
+                        merged_fasta.write(line)
+
+    console.print(f"[green]✓ Merged FASTA created: {merged_fasta_path}[/green]")
+
+    # Index merged FASTA
+    if not index_fasta(merged_fasta_path):
+        return False
+
+    # Merge GTF files
+    console.print(f"[cyan]Merging GTF files...[/cyan]")
+    with open(merged_gtf_path, "w") as merged_gtf:
+        for genome_id in source_genome_ids:
+            # Try to find GTF file (check for decompressed first, then compressed)
+            source_annotation_dirs = list((base_output_dir / genome_id / "annotation").glob("*"))
+
+            if not source_annotation_dirs:
+                console.print(f"[yellow]Warning: No annotation found for {genome_id}, skipping[/yellow]")
+                continue
+
+            # Use first annotation source found
+            annotation_source = source_annotation_dirs[0].name
+            source_gtf_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf"
+            source_gtf_gz_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf.gz"
+
+            if source_gtf_path.exists():
+                console.print(f"  Adding {genome_id} annotations from {annotation_source}...")
+                gtf_file_to_read = source_gtf_path
+                opener = open
+            elif source_gtf_gz_path.exists():
+                console.print(f"  Adding {genome_id} annotations from {annotation_source} (decompressing)...")
+                import gzip
+                gtf_file_to_read = source_gtf_gz_path
+                opener = gzip.open
+            else:
+                console.print(f"[yellow]Warning: No GTF found for {genome_id}, skipping[/yellow]")
+                continue
+
+            with opener(gtf_file_to_read, "rt") as source_gtf:
+                for line in source_gtf:
+                    if line.startswith("#"):
+                        # Write header with genome prefix
+                        merged_gtf.write(f"# {genome_id}: {line[1:].strip()}\n")
+                    else:
+                        fields = line.strip().split("\t")
+                        if len(fields) < 9:
+                            continue
+
+                        # Prefix chromosome name
+                        fields[0] = f"{genome_id}__{fields[0]}"
+
+                        # Prefix gene_id and gene_name in attributes (column 9)
+                        attributes = fields[8]
+                        # Parse and modify attributes
+                        attr_dict = {}
+                        for attr in attributes.split(";"):
+                            attr = attr.strip()
+                            if not attr:
+                                continue
+                            if " " in attr:
+                                key, value = attr.split(" ", 1)
+                                attr_dict[key] = value.strip('"')
+
+                        # Prefix gene_id and gene_name
+                        if "gene_id" in attr_dict:
+                            attr_dict["gene_id"] = f"{genome_id}__{attr_dict['gene_id']}"
+                        if "gene_name" in attr_dict:
+                            attr_dict["gene_name"] = f"{genome_id}__{attr_dict['gene_name']}"
+                        if "transcript_id" in attr_dict:
+                            attr_dict["transcript_id"] = f"{genome_id}__{attr_dict['transcript_id']}"
+
+                        # Reconstruct attributes
+                        new_attributes = "; ".join([f'{k} "{v}"' for k, v in attr_dict.items()])
+                        fields[8] = new_attributes + ";"
+
+                        merged_gtf.write("\t".join(fields) + "\n")
+
+    console.print(f"[green]✓ Merged GTF created: {merged_gtf_path}[/green]")
+
+    # Sort and compress GTF for tabix
+    console.print(f"[cyan]Sorting merged GTF...[/cyan]")
+    sorted_gtf_path = merged_annotation_dir / "genes.sorted.gtf"
+    if not sort_gtf_file(merged_gtf_path, sorted_gtf_path):
+        return False
+
+    # Remove unsorted GTF
+    merged_gtf_path.unlink()
+
+    # Compress with bgzip
+    compressed_gtf_path = merged_annotation_dir / "genes.gtf.gz"
+    if not compress_with_bgzip(sorted_gtf_path, compressed_gtf_path):
+        return False
+
+    # Remove sorted uncompressed file
+    sorted_gtf_path.unlink()
+
+    # Create tabix index
+    if not index_gtf_with_tabix(compressed_gtf_path):
+        return False
+
+    # Also keep uncompressed version for STAR
+    console.print(f"[cyan]Creating uncompressed GTF for STAR...[/cyan]")
+    uncompressed_for_star = merged_annotation_dir / "genes.gtf"
+    subprocess.run(
+        ["gunzip", "-c", str(compressed_gtf_path)],
+        stdout=open(uncompressed_for_star, "wb"),
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    console.print(f"[bold green]✓ Successfully created merged genome {merged_genome_id}[/bold green]")
+    console.print(f"  FASTA: {merged_fasta_path}")
+    console.print(f"  FASTA index: {merged_fasta_path}.fai")
+    console.print(f"  GTF: {compressed_gtf_path}")
+    console.print(f"  GTF index: {compressed_gtf_path}.tbi")
+
+    return True
+
+
 def download_genome_fasta(genome_id: str, config: dict[str, Any], base_output_dir: Path, force: bool = False) -> bool:
     """
     Download and prepare a genome FASTA file.
@@ -881,6 +1072,20 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
+    # Add subcommand for merge
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["merge"],
+        help="Command to run (optional: merge)",
+    )
+
+    parser.add_argument(
+        "merge_args",
+        nargs="*",
+        help="For merge: <merged_id> <genome1> <genome2> ...",
+    )
+
     parser.add_argument(
         "--genome",
         type=str,
@@ -935,6 +1140,19 @@ def main() -> int:
 
     # Load configuration
     config = load_configuration()
+
+    # Handle merge command
+    if args.command == "merge":
+        if len(args.merge_args) < 3:
+            console.print("[red]Error: merge requires at least 3 arguments: <merged_id> <genome1> <genome2> [genome3 ...]")
+            console.print("[yellow]Example: ./packrat.py merge hs1mm39 hs1 mm39[/yellow]")
+            return 1
+
+        merged_id = args.merge_args[0]
+        source_genomes = args.merge_args[1:]
+
+        success = merge_genomes(merged_id, source_genomes, config, args.output_dir, args.force)
+        return 0 if success else 1
 
     # List genomes
     if args.list:

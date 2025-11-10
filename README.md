@@ -107,6 +107,33 @@ chmod +x packrat.py
 
 # Build everything: download FASTA, annotation, and build STAR index
 ./packrat.py --genome hg38 --fasta --annotation --star
+
+# Merge genomes for hybrid/xenograft analysis
+./packrat.py merge hs1mm39 hs1 mm39
+```
+
+### Genome Merging
+
+For analyzing hybrid samples (e.g., human xenografts in mouse, PDX models), packrat can merge multiple genomes:
+
+```bash
+# First, download the source genomes
+./packrat.py --genome hs1 --fasta --annotation
+./packrat.py --genome mm39 --fasta --annotation
+
+# Merge them into a hybrid genome
+./packrat.py merge hs1mm39 hs1 mm39
+
+# Build STAR index for the merged genome
+./packrat.py --genome hs1mm39 --star
+```
+
+**What happens during merge:**
+- FASTA chromosomes are prefixed: `chr1` → `hs1__chr1`, `mm39__chr1`
+- Gene IDs are prefixed: `ENSG00000...` → `hs1__ENSG00000...`
+- Gene names are prefixed: `GAPDH` → `hs1__GAPDH`, `mm39__Gapdh`
+- Creates properly sorted and indexed GTF
+- Ready for STAR alignment to distinguish human vs mouse reads
 ```
 
 **Note**: By default, packrat will skip downloads/builds if the output files already exist. Use `--force` to re-download or rebuild.
