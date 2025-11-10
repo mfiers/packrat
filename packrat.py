@@ -117,6 +117,24 @@ def load_configuration() -> dict[str, Any]:
     return yaml.safe_load(CONFIG_YAML)
 
 
+def run_command(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+    """
+    Run a command and print the command line before execution.
+
+    Args:
+        cmd: Command and arguments as a list
+        **kwargs: Additional arguments to pass to subprocess.run()
+
+    Returns:
+        CompletedProcess instance
+    """
+    # Print the command line
+    console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
+
+    # Run the command
+    return subprocess.run(cmd, **kwargs)
+
+
 def check_tool_available(tool_name: str) -> bool:
     """Check if a required tool is available in PATH."""
     return shutil.which(tool_name) is not None
@@ -201,7 +219,7 @@ def decompress_gzip(input_path: Path, output_path: Path) -> bool:
     try:
         console.print(f"[cyan]Decompressing {input_path.name}...[/cyan]")
 
-        result = subprocess.run(
+        result = run_command(
             ["gunzip", "-c", str(input_path)],
             stdout=open(output_path, "wb"),
             stderr=subprocess.PIPE,
@@ -232,7 +250,7 @@ def index_fasta(fasta_path: Path) -> bool:
     try:
         console.print(f"[cyan]Indexing {fasta_path.name}...[/cyan]")
 
-        result = subprocess.run(
+        result = run_command(
             ["samtools", "faidx", str(fasta_path)],
             capture_output=True,
             text=True,
@@ -402,7 +420,7 @@ def sort_gtf_file(input_gtf_path: Path, output_gtf_path: Path) -> bool:
         # -k1,1: sort by chromosome (column 1)
         # -k4,4n: sort by start position (column 4, numeric)
         # -k5,5n: sort by end position (column 5, numeric)
-        result = subprocess.run(
+        result = run_command(
             ["sort", "-t", "\t", "-k1,1", "-k4,4n", "-k5,5n", str(temp_data_file)],
             capture_output=True,
             text=True,
@@ -450,7 +468,7 @@ def compress_with_bgzip(input_file_path: Path, output_file_path: Path) -> bool:
     try:
         console.print(f"[cyan]Compressing with bgzip...[/cyan]")
 
-        result = subprocess.run(
+        result = run_command(
             ["bgzip", "-c", str(input_file_path)],
             stdout=open(output_file_path, "wb"),
             stderr=subprocess.PIPE,
@@ -482,7 +500,7 @@ def index_gtf_with_tabix(gtf_gz_path: Path) -> bool:
     try:
         console.print(f"[cyan]Indexing with tabix...[/cyan]")
 
-        result = subprocess.run(
+        result = run_command(
             ["tabix", "-p", "gff", str(gtf_gz_path)],
             capture_output=True,
             text=True,
@@ -687,6 +705,18 @@ def build_star_index(
         console.print("[yellow]Run with --fasta to download first[/yellow]")
         return False
 
+    # Verify FASTA is not gzipped (STAR needs uncompressed FASTA)
+    try:
+        with open(fasta_path, 'rb') as f:
+            # Check magic bytes for gzip (1f 8b)
+            magic = f.read(2)
+            if magic == b'\x1f\x8b':
+                console.print(f"[red]Error: FASTA file appears to be gzipped[/red]")
+                console.print(f"[yellow]STAR requires uncompressed FASTA. Please decompress {fasta_path}[/yellow]")
+                return False
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not verify FASTA format: {e}[/yellow]")
+
     # Determine annotation source
     if annotation_source is None:
         # Auto-detect: check if only one annotation source exists
@@ -723,7 +753,7 @@ def build_star_index(
     if not gtf_path.exists() or force:
         console.print(f"[cyan]Decompressing GTF for STAR...[/cyan]")
         try:
-            result = subprocess.run(
+            result = run_command(
                 ["gunzip", "-c", str(gtf_gz_path)],
                 stdout=open(gtf_path, "wb"),
                 stderr=subprocess.PIPE,
@@ -780,7 +810,7 @@ def build_star_index(
         # STAR --runMode genomeGenerate
         # --sjdbOverhang should ideally be ReadLength-1, but 100 is a common default
         # --genomeChrBinNbits helps with large genomes and many chromosomes
-        result = subprocess.run(
+        result = run_command(
             [
                 "STAR",
                 "--runMode", "genomeGenerate",
@@ -1006,7 +1036,7 @@ def merge_genomes(
     # Also keep uncompressed version for STAR
     console.print(f"[cyan]Creating uncompressed GTF for STAR...[/cyan]")
     uncompressed_for_star = merged_annotation_dir / "genes.gtf"
-    subprocess.run(
+    run_command(
         ["gunzip", "-c", str(compressed_gtf_path)],
         stdout=open(uncompressed_for_star, "wb"),
         stderr=subprocess.PIPE,
