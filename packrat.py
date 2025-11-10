@@ -66,6 +66,19 @@ genomes:
         md5: ""
         has_chr_prefix: true
 
+  hs1:
+    name: "Human T2T-CHM13v2.0"
+    fasta:
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/hs1/bigZips/hs1.fa.gz"
+      md5: ""
+      has_chr_prefix: true
+    annotation:
+      refseq:
+        name: "RefSeq Genes"
+        url: "https://hgdownload.soe.ucsc.edu/goldenPath/hs1/bigZips/genes/hs1.ncbiRefSeq.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
+
   mm10:
     name: "Mouse GRCm38/mm10"
     fasta:

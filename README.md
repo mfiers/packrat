@@ -81,6 +81,9 @@ chmod +x packrat.py
 # Download genome FASTA (default behavior)
 ./packrat.py --genome hg38
 
+# Download T2T-CHM13 (complete telomere-to-telomere human genome)
+./packrat.py --genome hs1
+
 # Download mouse genome (mm39 is the latest)
 ./packrat.py --genome mm39
 
