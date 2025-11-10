@@ -798,6 +798,7 @@ def merge_genomes(
     config: dict[str, Any],
     base_output_dir: Path,
     force: bool = False,
+    annotation_source: str | None = None,
 ) -> bool:
     """
     Merge multiple genomes into a single hybrid genome.
@@ -812,6 +813,8 @@ def merge_genomes(
         config: Configuration dictionary
         base_output_dir: Base directory for output files
         force: Force rebuild even if merged genome exists
+        annotation_source: Annotation source to use (e.g., 'gencode', 'refseq').
+                         If None, uses first available annotation source.
 
     Returns:
         True if successful, False otherwise
@@ -875,31 +878,52 @@ def merge_genomes(
 
     # Merge GTF files
     console.print(f"[cyan]Merging GTF files...[/cyan]")
+    if annotation_source:
+        console.print(f"[cyan]Using annotation source: {annotation_source}[/cyan]")
+
     with open(merged_gtf_path, "w") as merged_gtf:
         for genome_id in source_genome_ids:
-            # Try to find GTF file (check for decompressed first, then compressed)
-            source_annotation_dirs = list((base_output_dir / genome_id / "annotation").glob("*"))
+            # Determine which annotation source to use
+            annotation_dir = base_output_dir / genome_id / "annotation"
+
+            if not annotation_dir.exists():
+                console.print(f"[yellow]Warning: No annotation directory found for {genome_id}, skipping[/yellow]")
+                continue
+
+            # Get available annotation sources
+            source_annotation_dirs = [d.name for d in annotation_dir.iterdir() if d.is_dir()]
 
             if not source_annotation_dirs:
                 console.print(f"[yellow]Warning: No annotation found for {genome_id}, skipping[/yellow]")
                 continue
 
-            # Use first annotation source found
-            annotation_source = source_annotation_dirs[0].name
-            source_gtf_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf"
-            source_gtf_gz_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf.gz"
+            # Select annotation source
+            if annotation_source:
+                # Use specified annotation source
+                if annotation_source not in source_annotation_dirs:
+                    console.print(f"[red]Error: Annotation source '{annotation_source}' not found for {genome_id}[/red]")
+                    console.print(f"[yellow]Available sources: {', '.join(source_annotation_dirs)}[/yellow]")
+                    return False
+                selected_source = annotation_source
+            else:
+                # Use first annotation source found
+                selected_source = source_annotation_dirs[0]
+                console.print(f"[cyan]Auto-selected annotation source '{selected_source}' for {genome_id}[/cyan]")
+
+            source_gtf_path = annotation_dir / selected_source / "genes.gtf"
+            source_gtf_gz_path = annotation_dir / selected_source / "genes.gtf.gz"
 
             if source_gtf_path.exists():
-                console.print(f"  Adding {genome_id} annotations from {annotation_source}...")
+                console.print(f"  Adding {genome_id} annotations from {selected_source}...")
                 gtf_file_to_read = source_gtf_path
                 opener = open
             elif source_gtf_gz_path.exists():
-                console.print(f"  Adding {genome_id} annotations from {annotation_source} (decompressing)...")
+                console.print(f"  Adding {genome_id} annotations from {selected_source} (decompressing)...")
                 import gzip
                 gtf_file_to_read = source_gtf_gz_path
                 opener = gzip.open
             else:
-                console.print(f"[yellow]Warning: No GTF found for {genome_id}, skipping[/yellow]")
+                console.print(f"[yellow]Warning: No GTF found for {genome_id} in {selected_source}, skipping[/yellow]")
                 continue
 
             with opener(gtf_file_to_read, "rt") as source_gtf:
@@ -1156,7 +1180,14 @@ def main() -> int:
         merged_id = args.merge_args[0]
         source_genomes = args.merge_args[1:]
 
-        success = merge_genomes(merged_id, source_genomes, config, args.output_dir, args.force)
+        success = merge_genomes(
+            merged_id,
+            source_genomes,
+            config,
+            args.output_dir,
+            args.force,
+            args.annotation_source
+        )
         return 0 if success else 1
 
     # List genomes

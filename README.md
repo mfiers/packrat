@@ -113,6 +113,9 @@ chmod +x packrat.py
 
 # Merge genomes for hybrid/xenograft analysis
 ./packrat.py merge hs1mm39 hs1 mm39
+
+# Specify annotation source for merging
+./packrat.py merge hs1mm39 hs1 mm39 --annotation-source refseq
 ```
 
 ### Genome Merging
@@ -126,6 +129,9 @@ For analyzing hybrid samples (e.g., human xenografts in mouse, PDX models), pack
 
 # Merge them into a hybrid genome
 ./packrat.py merge hs1mm39 hs1 mm39
+
+# Or specify which annotation source to use (e.g., 'gencode' or 'refseq')
+./packrat.py merge hs1mm39 hs1 mm39 --annotation-source refseq
 
 # Build STAR index for the merged genome
 ./packrat.py --genome hs1mm39 --star
