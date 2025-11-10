@@ -13,7 +13,7 @@ This tool automates the download, indexing, and preparation of genomic reference
 
 - **Genome references**: Downloads FASTA files and creates indexes (.fai)
 - **Gene annotations**: Downloads and indexes annotation files (GTF format)
-- **Tool databases**: Builds indexes for STAR (Salmon, BWA support coming soon)
+- **Tool databases**: Builds indexes for STAR and Salmon (BWA support coming soon)
 
 ## Features
 
@@ -28,11 +28,15 @@ hg38/
 │   └── genome.fa.fai
 ├── annotation/
 │   └── gencode/
-│       ├── genes.gtf       (decompressed for STAR)
+│       ├── genes.gtf       (decompressed for STAR/Salmon)
 │       ├── genes.gtf.gz    (bgzipped for tabix)
 │       └── genes.gtf.gz.tbi
-└── STAR/
-    └── 2.7.11b/
+├── STAR/
+│   └── 2.7.11b/
+│       └── <index files>
+└── salmon/
+    └── 1.10.3/
+        ├── transcripts.fa
         └── <index files>
 ```
 
@@ -63,7 +67,9 @@ hg38/
   - **samtools** - For FASTA indexing
   - **bgzip** and **tabix** (from htslib) - For GTF compression and indexing
   - **STAR** - Optional, for building STAR alignment indexes
-  - **Salmon, BWA** - Coming soon
+  - **Salmon** - Optional, for building transcript indexes (requires gffread)
+  - **gffread** - Optional, for extracting transcript sequences (required by Salmon)
+  - **BWA** - Coming soon
 
 **Note**: Python dependencies are managed inline using uv's script metadata format (PEP 723). No separate virtual environment setup needed - uv handles everything automatically when you run the script.
 
@@ -108,8 +114,11 @@ chmod +x packrat.py
 # Build STAR index (auto-detects annotation if only one exists)
 ./packrat.py --genome hg38 --star
 
-# Build everything: download FASTA, annotation, and build STAR index
-./packrat.py --genome hg38 --fasta --annotation --star
+# Build Salmon transcript index
+./packrat.py --genome hg38 --salmon
+
+# Build everything: download FASTA, annotation, and build both STAR and Salmon indexes
+./packrat.py --genome hg38 --fasta --annotation --star --salmon
 
 # Merge genomes for hybrid/xenograft analysis
 ./packrat.py merge hs1mm39 hs1 mm39

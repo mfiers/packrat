@@ -37,6 +37,9 @@ from rich.progress import (
 
 console = Console()
 
+# Path to statically compiled STAR binary
+STAR_BINARY = Path(__file__).parent / "bin" / "STAR"
+
 # Embedded YAML configuration for reference data sources
 CONFIG_YAML = """
 genomes:
@@ -52,6 +55,11 @@ genomes:
         url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/gencode.v47.annotation.gtf.gz"
         md5: ""
         has_chr_prefix: true
+      refseq:
+        name: "RefSeq Genes"
+        url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.ncbiRefSeq.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 
   hg19:
     name: "Human GRCh37/hg19"
@@ -65,6 +73,11 @@ genomes:
         url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/GRCh37_mapping/gencode.v47lift37.annotation.gtf.gz"
         md5: ""
         has_chr_prefix: true
+      refseq:
+        name: "RefSeq Genes"
+        url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/genes/hg19.ncbiRefSeq.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 
   hs1:
     name: "Human T2T-CHM13v2.0"
@@ -73,6 +86,11 @@ genomes:
       md5: ""
       has_chr_prefix: true
     annotation:
+      gencode:
+        name: "GENCODE v47 (CHM13)"
+        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/CHM13_mapping/gencode.v47.chr_patch_hapl_scaff.annotation.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
       refseq:
         name: "RefSeq Genes"
         url: "https://hgdownload.soe.ucsc.edu/goldenPath/hs1/bigZips/genes/hs1.ncbiRefSeq.gtf.gz"
@@ -89,6 +107,11 @@ genomes:
       gencode:
         name: "GENCODE vM35"
         url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
+      refseq:
+        name: "RefSeq Genes"
+        url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/mm10.ncbiRefSeq.gtf.gz"
         md5: ""
         has_chr_prefix: true
 
@@ -766,20 +789,25 @@ def build_star_index(
     else:
         console.print(f"[cyan]Using existing decompressed GTF: {gtf_path}[/cyan]")
 
-    # Get STAR version
-    if not check_tool_available("STAR"):
-        console.print("[red]Error: STAR not found in PATH[/red]")
-        console.print("[yellow]Please install STAR and ensure it's in your PATH[/yellow]")
+    # Check for STAR binary
+    if not STAR_BINARY.exists():
+        console.print(f"[red]Error: STAR binary not found at {STAR_BINARY}[/red]")
+        console.print("[yellow]Please ensure STAR is installed in the bin/ directory[/yellow]")
         return False
 
-    star_version = get_tool_version("STAR")
-    if star_version:
-        # STAR --version returns just the version number (e.g., "2.7.11b")
-        star_version_number = star_version.strip()
-        console.print(f"[green]✓ Found STAR: {star_version_number}[/green]")
-    else:
+    # Get STAR version
+    try:
+        result = subprocess.run(
+            [str(STAR_BINARY), "--version"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        star_version_number = result.stdout.strip()
+        console.print(f"[green]✓ Found STAR: {star_version_number} at {STAR_BINARY}[/green]")
+    except Exception as e:
         star_version_number = "unknown"
-        console.print("[yellow]Warning: Could not detect STAR version[/yellow]")
+        console.print(f"[yellow]Warning: Could not detect STAR version: {e}[/yellow]")
 
     # Setup output directory
     star_output_dir = base_output_dir / genome_id / "STAR" / star_version_number
@@ -812,7 +840,7 @@ def build_star_index(
         # --genomeChrBinNbits helps with large genomes and many chromosomes
         result = run_command(
             [
-                "STAR",
+                str(STAR_BINARY),
                 "--runMode", "genomeGenerate",
                 "--genomeDir", str(star_output_dir),
                 "--genomeFastaFiles", str(fasta_path),
@@ -833,6 +861,191 @@ def build_star_index(
 
     except subprocess.CalledProcessError as error:
         console.print(f"[red]Error building STAR index:[/red]")
+        console.print(error.stderr)
+        return False
+
+
+def build_salmon_index(
+    genome_id: str,
+    annotation_source: str | None,
+    config: dict[str, Any],
+    base_output_dir: Path,
+    force: bool = False,
+) -> bool:
+    """
+    Build Salmon transcript index for a genome.
+
+    Args:
+        genome_id: Genome identifier (e.g., 'hg38')
+        annotation_source: Annotation source (e.g., 'gencode'), or None to auto-detect
+        config: Configuration dictionary
+        base_output_dir: Base directory for output files
+        force: Force rebuild even if index exists
+
+    Returns:
+        True if successful, False otherwise
+    """
+    # Check if this is a known genome or a merged genome
+    genome_dir = base_output_dir / genome_id
+    is_merged_genome = False
+
+    if genome_id in config["genomes"]:
+        genome_config = config["genomes"][genome_id]
+        genome_name = genome_config["name"]
+    elif genome_dir.exists() and (genome_dir / "fasta" / "genome.fa").exists():
+        # This appears to be a merged genome
+        is_merged_genome = True
+        genome_name = f"Merged genome {genome_id}"
+        console.print(f"[cyan]Detected merged genome: {genome_id}[/cyan]")
+    else:
+        console.print(f"[red]Error: Unknown genome '{genome_id}'[/red]")
+        console.print(f"[yellow]Genome directory not found at {genome_dir}[/yellow]")
+        return False
+
+    console.print(f"\n[bold cyan]Building Salmon index for {genome_name} ({genome_id})[/bold cyan]")
+
+    # Check for FASTA
+    fasta_path = base_output_dir / genome_id / "fasta" / "genome.fa"
+    if not fasta_path.exists():
+        console.print(f"[red]Error: FASTA file not found at {fasta_path}[/red]")
+        console.print("[yellow]Run with --fasta to download first[/yellow]")
+        return False
+
+    # Determine annotation source
+    if annotation_source is None:
+        # Auto-detect: check if only one annotation source exists
+        annotation_dir = base_output_dir / genome_id / "annotation"
+        if annotation_dir.exists():
+            available_sources = [d.name for d in annotation_dir.iterdir() if d.is_dir()]
+            if len(available_sources) == 1:
+                annotation_source = available_sources[0]
+                console.print(f"[cyan]Auto-detected annotation source: {annotation_source}[/cyan]")
+            elif len(available_sources) > 1:
+                console.print(f"[red]Error: Multiple annotation sources found: {', '.join(available_sources)}[/red]")
+                console.print("[yellow]Please specify --annotation-source[/yellow]")
+                return False
+            else:
+                console.print("[red]Error: No annotation found[/red]")
+                console.print("[yellow]Run with --annotation to download first[/yellow]")
+                return False
+        else:
+            console.print("[red]Error: No annotation directory found[/red]")
+            console.print("[yellow]Run with --annotation to download first[/yellow]")
+            return False
+
+    # Check for annotation GTF (need uncompressed for gffread)
+    gtf_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf"
+    gtf_gz_path = base_output_dir / genome_id / "annotation" / annotation_source / "genes.gtf.gz"
+
+    if not gtf_path.exists():
+        if gtf_gz_path.exists():
+            console.print(f"[cyan]Decompressing GTF for transcript extraction...[/cyan]")
+            try:
+                result = run_command(
+                    ["gunzip", "-c", str(gtf_gz_path)],
+                    stdout=open(gtf_path, "wb"),
+                    stderr=subprocess.PIPE,
+                    check=True,
+                )
+                console.print(f"[green]✓ Decompressed GTF to {gtf_path}[/green]")
+            except subprocess.CalledProcessError as error:
+                console.print(f"[red]Error decompressing GTF: {error.stderr.decode()}[/red]")
+                return False
+        else:
+            console.print(f"[red]Error: GTF file not found at {gtf_path} or {gtf_gz_path}[/red]")
+            console.print(f"[yellow]Run with --annotation --annotation-source {annotation_source} to download first[/yellow]")
+            return False
+
+    # Check for salmon
+    if not check_tool_available("salmon"):
+        console.print("[red]Error: salmon not found in PATH[/red]")
+        console.print("[yellow]Please install salmon and ensure it's in your PATH[/yellow]")
+        return False
+
+    # Get salmon version
+    try:
+        result = subprocess.run(
+            ["salmon", "--version"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # Salmon outputs "salmon 1.10.3" so we extract just the version
+        salmon_version = result.stdout.strip().split()[-1]
+        console.print(f"[green]✓ Found Salmon: {salmon_version}[/green]")
+    except Exception as e:
+        salmon_version = "unknown"
+        console.print(f"[yellow]Warning: Could not detect Salmon version: {e}[/yellow]")
+
+    # Setup output directory
+    salmon_output_dir = base_output_dir / genome_id / "salmon" / salmon_version
+    transcripts_fa = salmon_output_dir / "transcripts.fa"
+
+    # Check if index already exists
+    if (salmon_output_dir / "pos.bin").exists():
+        if not force:
+            console.print(f"[green]✓ Salmon index already exists at {salmon_output_dir}[/green]")
+            console.print("[yellow]Use --force to rebuild[/yellow]")
+            return True
+        else:
+            console.print(f"[yellow]Salmon index exists but --force specified, rebuilding...[/yellow]")
+
+    salmon_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract transcripts using gffread (most reliable method)
+    if not check_tool_available("gffread"):
+        console.print("[red]Error: gffread not found in PATH[/red]")
+        console.print("[yellow]gffread is part of gffutils. Please install it.[/yellow]")
+        return False
+
+    console.print(f"[cyan]Extracting transcript sequences with gffread...[/cyan]")
+    console.print(f"  FASTA: {fasta_path}")
+    console.print(f"  GTF: {gtf_path}")
+    console.print(f"  Output: {transcripts_fa}")
+
+    try:
+        result = run_command(
+            ["gffread", str(gtf_path), "-g", str(fasta_path), "-w", str(transcripts_fa)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        console.print(f"[green]✓ Extracted transcripts to {transcripts_fa}[/green]")
+    except subprocess.CalledProcessError as error:
+        console.print(f"[red]Error extracting transcripts:[/red]")
+        console.print(error.stderr)
+        return False
+
+    # Build Salmon index
+    console.print(f"[cyan]Building Salmon index (this may take a while)...[/cyan]")
+    console.print(f"  Transcripts: {transcripts_fa}")
+    console.print(f"  Output: {salmon_output_dir}")
+
+    # Detect number of available CPUs
+    import os
+    num_cpus = os.cpu_count() or 8
+    console.print(f"  Using {num_cpus} CPU threads")
+
+    try:
+        result = run_command(
+            [
+                "salmon",
+                "index",
+                "-t", str(transcripts_fa),
+                "-i", str(salmon_output_dir),
+                "-p", str(num_cpus),
+                "--gencode",  # Parse GENCODE/ENSEMBL transcript names properly
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        console.print(f"[bold green]✓ Successfully built Salmon index[/bold green]")
+        console.print(f"  Index directory: {salmon_output_dir}")
+        return True
+    except subprocess.CalledProcessError as error:
+        console.print(f"[red]Error building Salmon index:[/red]")
         console.print(error.stderr)
         return False
 
@@ -1198,6 +1411,12 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--salmon",
+        action="store_true",
+        help="Build Salmon transcript index (requires FASTA and annotation)",
+    )
+
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path.cwd(),
@@ -1255,9 +1474,10 @@ def main() -> int:
     download_fasta_flag = args.fasta
     download_annotation_flag = args.annotation
     build_star_flag = args.star
+    build_salmon_flag = args.salmon
 
     # If nothing specified, default to downloading FASTA only
-    if not download_fasta_flag and not download_annotation_flag and not build_star_flag:
+    if not download_fasta_flag and not download_annotation_flag and not build_star_flag and not build_salmon_flag:
         download_fasta_flag = True
 
     # Track overall success
@@ -1314,15 +1534,23 @@ def main() -> int:
 
     # Build STAR index
     if build_star_flag:
-        # Check for required tools
-        if not check_tool_available("STAR"):
-            console.print("[red]Error: STAR is required but not found in PATH[/red]")
-            console.print("[yellow]Please install STAR and ensure it's in your PATH[/yellow]")
+        # Check for STAR binary
+        if not STAR_BINARY.exists():
+            console.print(f"[red]Error: STAR binary not found at {STAR_BINARY}[/red]")
+            console.print("[yellow]Please ensure STAR is installed in the bin/ directory[/yellow]")
             return 1
 
-        star_version = get_tool_version("STAR")
-        if star_version:
-            console.print(f"[green]✓ Found STAR: {star_version}[/green]")
+        try:
+            result = subprocess.run(
+                [str(STAR_BINARY), "--version"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            star_version = result.stdout.strip()
+            console.print(f"[green]✓ Found STAR: {star_version} at {STAR_BINARY}[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not detect STAR version: {e}[/yellow]")
 
         # Determine annotation source for STAR
         # If user specified --annotation-source, use it; otherwise let build_star_index auto-detect
@@ -1331,6 +1559,45 @@ def main() -> int:
         success = build_star_index(
             args.genome,
             annotation_source_for_star,
+            config,
+            args.output_dir,
+            args.force,
+        )
+        if not success:
+            all_successful = False
+
+    # Build Salmon index
+    if build_salmon_flag:
+        # Check for required tools
+        if not check_tool_available("salmon"):
+            console.print("[red]Error: salmon is required but not found in PATH[/red]")
+            console.print("[yellow]Please install salmon and ensure it's in your PATH[/yellow]")
+            return 1
+
+        if not check_tool_available("gffread"):
+            console.print("[red]Error: gffread is required but not found in PATH[/red]")
+            console.print("[yellow]gffread is part of gffutils. Please install it.[/yellow]")
+            return 1
+
+        try:
+            result = subprocess.run(
+                ["salmon", "--version"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            salmon_version = result.stdout.strip().split()[-1]
+            console.print(f"[green]✓ Found Salmon: {salmon_version}[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not detect Salmon version: {e}[/yellow]")
+
+        # Determine annotation source for Salmon
+        # If user specified --annotation-source, use it; otherwise let build_salmon_index auto-detect
+        annotation_source_for_salmon = args.annotation_source if args.annotation_source != "gencode" or download_annotation_flag else None
+
+        success = build_salmon_index(
+            args.genome,
+            annotation_source_for_salmon,
             config,
             args.output_dir,
             args.force,
