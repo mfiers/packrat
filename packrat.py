@@ -78,6 +78,19 @@ genomes:
         url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz"
         md5: ""
         has_chr_prefix: true
+
+  mm39:
+    name: "Mouse GRCm39/mm39"
+    fasta:
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/mm39.fa.gz"
+      md5: ""
+      has_chr_prefix: true
+    annotation:
+      gencode:
+        name: "GENCODE vM35"
+        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 """
 
 

@@ -81,6 +81,9 @@ chmod +x packrat.py
 # Download genome FASTA (default behavior)
 ./packrat.py --genome hg38
 
+# Download mouse genome (mm39 is the latest)
+./packrat.py --genome mm39
+
 # Download genome annotation
 ./packrat.py --genome hg38 --annotation
 
