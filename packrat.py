@@ -998,14 +998,56 @@ def build_salmon_index(
         console.print("[yellow]gffread is part of gffutils. Please install it.[/yellow]")
         return False
 
+    # Filter GTF to only include standard chromosomes (avoid fix/alt patches that aren't in main FASTA)
+    # Standard chromosomes: chr1-22, chrX, chrY, chrM for human; chr1-19, chrX, chrY, chrM for mouse
+    filtered_gtf_path = salmon_output_dir / "genes_filtered.gtf"
+    console.print(f"[cyan]Filtering GTF to standard chromosomes...[/cyan]")
+
+    standard_chromosomes = set()
+    if genome_id in ["hg38", "hg19", "hs1"]:
+        # Human chromosomes
+        standard_chromosomes = {f"chr{i}" for i in range(1, 23)} | {"chrX", "chrY", "chrM"}
+    elif genome_id in ["mm10", "mm39"]:
+        # Mouse chromosomes
+        standard_chromosomes = {f"chr{i}" for i in range(1, 20)} | {"chrX", "chrY", "chrM"}
+    else:
+        # For merged/unknown genomes, try to get chromosomes from FASTA index
+        fai_path = Path(f"{fasta_path}.fai")
+        if fai_path.exists():
+            with open(fai_path) as f:
+                standard_chromosomes = {line.split('\t')[0] for line in f}
+        else:
+            console.print("[yellow]Warning: Could not determine standard chromosomes, using all[/yellow]")
+            # Just copy the file
+            import shutil
+            shutil.copy(gtf_path, filtered_gtf_path)
+
+    if standard_chromosomes:
+        with open(gtf_path) as input_gtf, open(filtered_gtf_path, 'w') as output_gtf:
+            filtered_count = 0
+            total_count = 0
+            for line in input_gtf:
+                if line.startswith('#'):
+                    output_gtf.write(line)
+                    continue
+                total_count += 1
+                chrom = line.split('\t')[0]
+                if chrom in standard_chromosomes:
+                    output_gtf.write(line)
+                else:
+                    filtered_count += 1
+
+        if filtered_count > 0:
+            console.print(f"[cyan]Filtered out {filtered_count}/{total_count} entries from non-standard chromosomes[/cyan]")
+
     console.print(f"[cyan]Extracting transcript sequences with gffread...[/cyan]")
     console.print(f"  FASTA: {fasta_path}")
-    console.print(f"  GTF: {gtf_path}")
+    console.print(f"  GTF: {filtered_gtf_path}")
     console.print(f"  Output: {transcripts_fa}")
 
     try:
         result = run_command(
-            ["gffread", str(gtf_path), "-g", str(fasta_path), "-w", str(transcripts_fa)],
+            ["gffread", str(filtered_gtf_path), "-g", str(fasta_path), "-w", str(transcripts_fa)],
             capture_output=True,
             text=True,
             check=True,
