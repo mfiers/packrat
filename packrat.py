@@ -104,6 +104,11 @@ genomes:
         url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz"
         md5: ""
         has_chr_prefix: true
+      refseq:
+        name: "RefSeq Genes"
+        url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/genes/mm39.ncbiRefSeq.gtf.gz"
+        md5: ""
+        has_chr_prefix: true
 """
 
 

@@ -90,6 +90,9 @@ chmod +x packrat.py
 # Download genome annotation
 ./packrat.py --genome hg38 --annotation
 
+# Download RefSeq annotation (alternative to GENCODE)
+./packrat.py --genome mm39 --annotation --annotation-source refseq
+
 # Download both FASTA and annotation
 ./packrat.py --genome hg38 --fasta --annotation
 
