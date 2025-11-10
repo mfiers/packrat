@@ -661,12 +661,22 @@ def build_star_index(
     Returns:
         True if successful, False otherwise
     """
-    if genome_id not in config["genomes"]:
-        console.print(f"[red]Error: Unknown genome '{genome_id}'[/red]")
-        return False
+    # Check if this is a known genome or a merged genome
+    genome_dir = base_output_dir / genome_id
+    is_merged_genome = False
 
-    genome_config = config["genomes"][genome_id]
-    genome_name = genome_config["name"]
+    if genome_id in config["genomes"]:
+        genome_config = config["genomes"][genome_id]
+        genome_name = genome_config["name"]
+    elif genome_dir.exists() and (genome_dir / "fasta" / "genome.fa").exists():
+        # This appears to be a merged genome
+        is_merged_genome = True
+        genome_name = f"Merged genome {genome_id}"
+        console.print(f"[cyan]Detected merged genome: {genome_id}[/cyan]")
+    else:
+        console.print(f"[red]Error: Unknown genome '{genome_id}'[/red]")
+        console.print(f"[yellow]Genome directory not found at {genome_dir}[/yellow]")
+        return False
 
     console.print(f"\n[bold cyan]Building STAR index for {genome_name} ({genome_id})[/bold cyan]")
 
